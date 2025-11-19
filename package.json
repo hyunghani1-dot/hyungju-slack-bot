@@ -1,7 +1,6 @@
 {
   "name": "hyungju-slack-bot",
   "version": "1.0.0",
-  "type": "module",
   "dependencies": {
     "openai": "^4.76.0",
     "@slack/web-api": "^7.0.0"
