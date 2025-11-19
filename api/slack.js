@@ -43,7 +43,7 @@ module.exports = async (req, res) => {
 
     // 5) OpenAI gpt-5.1 호출
     const completion = await openai.chat.completions.create({
-      model: "gpt-5.1",
+      model: "gpt-5.1-mini",
       messages: [
         {
           role: "system",
