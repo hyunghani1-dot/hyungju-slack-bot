@@ -1,4 +1,5 @@
 // api/notion.js
+
 const { Client } = require("@notionhq/client");
 
 const notion = new Client({
@@ -6,8 +7,8 @@ const notion = new Client({
 });
 
 /**
- * 노션 전체 검색해서 질문과 관련 있는 페이지들의 텍스트를 모아
- * 하나의 긴 context 문자열로 반환하는 함수
+ * 노션 전체에서 query와 관련된 페이지를 검색하고
+ * 상위 maxPages 개의 페이지 내용을 모아서 하나의 문자열로 반환
  */
 async function buildNotionContext(query, maxPages = 3) {
   if (!process.env.NOTION_API_KEY) {
@@ -15,11 +16,7 @@ async function buildNotionContext(query, maxPages = 3) {
     return "";
   }
 
-  if (!query || !query.trim()) {
-    return "";
-  }
-
-  // 1) 노션 전체 검색
+  // 1) 노션 검색: 최근 수정 순으로 정렬
   const searchResponse = await notion.search({
     query,
     sort: {
@@ -30,70 +27,62 @@ async function buildNotionContext(query, maxPages = 3) {
   });
 
   const results = searchResponse.results || [];
-  if (results.length === 0) {
-    return "";
-  }
+  if (results.length === 0) return "";
 
   let contextChunks = [];
 
-  // 2) 각 검색 결과 페이지에서 텍스트 블록 뽑기
   for (const result of results) {
     if (result.object !== "page") continue;
 
     const pageId = result.id;
 
-    // 페이지의 child blocks 가져오기 (최대 50개)
+    // 페이지 제목 가져오기
+    const title =
+      result.properties?.title?.title?.[0]?.plain_text ||
+      result.properties?.Name?.title?.[0]?.plain_text ||
+      "제목 없음";
+
+    let pageTexts = [`# ${title}`];
+
+    // 2) 페이지의 블록(내용) 가져오기
     const blocks = await notion.blocks.children.list({
       block_id: pageId,
-      page_size: 50
+      page_size: 100
     });
 
-    const texts = [];
-
     for (const block of blocks.results) {
-      // 단락(paragraph)
+      let richTexts = [];
+
       if (block.type === "paragraph") {
-        const richTexts = block.paragraph.rich_text || [];
-        const plain = richTexts.map((t) => t.plain_text).join("");
-        if (plain.trim()) texts.push(plain.trim());
+        richTexts = block.paragraph.rich_text;
+      } else if (block.type === "heading_1") {
+        richTexts = block.heading_1.rich_text;
+      } else if (block.type === "heading_2") {
+        richTexts = block.heading_2.rich_text;
+      } else if (block.type === "heading_3") {
+        richTexts = block.heading_3.rich_text;
+      } else if (block.type === "bulleted_list_item") {
+        richTexts = block.bulleted_list_item.rich_text;
+      } else if (block.type === "numbered_list_item") {
+        richTexts = block.numbered_list_item.rich_text;
       }
 
-      // 제목(heading_1~3)
-      if (
-        block.type === "heading_1" ||
-        block.type === "heading_2" ||
-        block.type === "heading_3"
-      ) {
-        const richTexts = block[block.type].rich_text || [];
+      if (richTexts && richTexts.length > 0) {
         const plain = richTexts.map((t) => t.plain_text).join("");
-        if (plain.trim()) texts.push("# " + plain.trim());
-      }
-
-      // 불릿 리스트(bulleted_list_item)
-      if (block.type === "bulleted_list_item") {
-        const richTexts = block.bulleted_list_item.rich_text || [];
-        const plain = richTexts.map((t) => t.plain_text).join("");
-        if (plain.trim()) texts.push("- " + plain.trim());
+        if (plain.trim()) pageTexts.push(plain.trim());
       }
     }
 
-    if (texts.length > 0) {
-      const joined = texts.join("\n");
-      contextChunks.push(joined);
-    }
+    contextChunks.push(pageTexts.join("\n"));
   }
 
-  if (contextChunks.length === 0) {
-    return "";
-  }
-
-  // 3) 여러 페이지 내용을 하나의 문자열로 합치기
+  // 3) 전체 컨텍스트 문자열로 결합
   let context = contextChunks.join("\n\n---\n\n");
 
-  // 너무 길어지면 앞부분만 사용 (토큰 제한 방지)
-  const MAX_CHARS = 6000;
+  // GPT 입력 길이 제한을 위해 자르기
+  const MAX_CHARS = 8000;
   if (context.length > MAX_CHARS) {
-    context = context.slice(0, MAX_CHARS) + "\n\n...[이후 내용 생략]";
+    context = context.slice(0, MAX_CHARS) + "\n\n...(생략)";
   }
 
   return context;
