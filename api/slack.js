@@ -2,7 +2,7 @@
 
 const OpenAI = require("openai");
 const { WebClient } = require("@slack/web-api");
-const { searchNotion } = require("./notion");
+const { buildNotionContext } = require("./notion");
 
 // OpenAI 클라이언트
 const openai = new OpenAI({
@@ -35,48 +35,51 @@ module.exports = async (req, res) => {
     }
 
     // 4) 멘션 텍스트에서 @봇이름 부분 제거
-    const rawText = event.text || "";
+        const rawText = event.text || "";
     const text = rawText.replace(/<@[^>]+>/, "").trim();
 
     if (!text) {
       return res.status(200).send("no text");
     }
 
-    // 5) OpenAI gpt-4.1 호출
-   // 4-1) 노션에서 관련 내용 검색
-const notionContext = await searchNotion(text);
+    // 4-A) 노션 전체 검색해서 관련 내용 context 만들기
+    let notionContext = "";
+    try {
+      notionContext = await buildNotionContext(text, 3); // 상위 3개 페이지 사용
+    } catch (e) {
+      console.error("Notion 검색 중 에러:", e);
+      notionContext = "";
+    }
 
-// 5) OpenAI gpt-4.1-mini 호출 (노션 콘텍스트 포함)
-let messages = [
-  {
-    role: "system",
-    content:
-      "너는 형주한의원 전용상담 gpt야. 직원 물음에는 상세하게 설명해주고, 환자응대는 부드럽고 전문적이되, 의학적인 부분은 단호하게 해줘."
-  }
-];
+    // 5) OpenAI gpt-4.1-mini 호출 (노션 context를 함께 전달)
+    const messages = [
+      {
+        role: "system",
+        content:
+          "너는 형주한의원 전용상담 gpt야. 직원 물음에는 상세하게 설명해주고, 환자응대는 부드럽고 전문적이되, 의학적인 부분은 단호하게 해줘."
+      }
+    ];
 
-// 노션에서 뭔가라도 찾았으면, 그 내용을 추가로 제공
-if (notionContext) {
-  messages.push({
-    role: "system",
-    content:
-      "아래는 형주한의원 노션 문서에서 이 질문과 관련해 검색된 내용이야. 가능한 한 이 정보를 우선 참고해서 답변해.\n\n" +
-      notionContext
-  });
-}
+    // 노션에서 뽑은 내용이 있을 때만 system 메시지 하나 더 추가
+    if (notionContext) {
+      messages.push({
+        role: "system",
+        content:
+          "아래는 형주한의원의 내부 노션 문서에서 가져온 참고 정보야. 답변할 때 이 내용을 우선 참고하고, 부족한 부분만 일반적인 의학 지식으로 보완해.\n\n" +
+          notionContext
+      });
+    }
 
-// 마지막에 유저 질문 추가
-messages.push({
-  role: "user",
-  content: text
-});
+    // 마지막에 실제 사용자의 질문
+    messages.push({
+      role: "user",
+      content: text
+    });
 
-const completion = await openai.chat.completions.create({
-  model: "gpt-4.1-mini",
-  messages
-});
-
-    const answer = completion.choices[0].message.content;
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages
+    });
 
     // 6) Slack 채널에 스레드로 답변 달기
     await slack.chat.postMessage({
