@@ -1,11 +1,14 @@
+// package.json (프로젝트 루트 디렉토리)
 {
-  "name": "your-slack-bot",
+  "name": "notion-gemini-slack-bot",
   "version": "1.0.0",
-  "description": "Slack AI bot integrated with Notion",
+  "description": "Notion RAG bot using Gemini for Slack",
   "main": "api/slack.js",
   "dependencies": {
+    "@google/genai": "^0.2.5",
     "@slack/web-api": "^6.x",
-    "@google/genai": "^0.2.5" 
+    "@notionhq/client": "^2.x",   // ⬅️ Notion API 클라이언트 추가
+    "dotenv": "^16.x"             // ⬅️ 로컬 테스트를 위한 환경 변수 모듈 추가
   },
   "scripts": {
     "start": "node api/slack.js"
