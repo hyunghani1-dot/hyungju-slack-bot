@@ -1,93 +1,63 @@
 // api/notion.js
-
 const { Client } = require("@notionhq/client");
 
-const notion = new Client({
-  auth: process.env.NOTION_API_KEY
-});
+// Notion 클라이언트 초기화
+const notion = new Client({ auth: process.env.NOTION_API_KEY });
+
+// Notion 데이터베이스 ID (Notion URL에서 추출해야 합니다!)
+const DATABASE_ID = process.env.NOTION_DATABASE_ID;
 
 /**
- * 노션 전체에서 query와 관련된 페이지를 검색하고
- * 상위 maxPages 개의 페이지 내용을 모아서 하나의 문자열로 반환
+ * Notion 데이터베이스에서 텍스트를 검색하고 컨텍스트를 구축합니다.
+ * @param {string} query 사용자 질문
+ * @returns {Promise<string>} Gemini에게 전달할 컨텍스트 문자열
  */
-async function buildNotionContext(query, maxPages = 3) {
-  if (!process.env.NOTION_API_KEY) {
-    console.warn("NOTION_API_KEY is not set");
-    return "";
+async function buildNotionContext(query) {
+  if (!DATABASE_ID) {
+    return "Notion 데이터베이스 ID가 설정되지 않았습니다.";
   }
 
-  // 1) 노션 검색: 최근 수정 순으로 정렬
-  const searchResponse = await notion.search({
-    query,
-    sort: {
-      direction: "descending",
-      timestamp: "last_edited_time"
-    },
-    page_size: maxPages
-  });
-
-  const results = searchResponse.results || [];
-  if (results.length === 0) return "";
-
-  let contextChunks = [];
-
-  for (const result of results) {
-    if (result.object !== "page") continue;
-
-    const pageId = result.id;
-
-    // 페이지 제목 가져오기
-    const title =
-      result.properties?.title?.title?.[0]?.plain_text ||
-      result.properties?.Name?.title?.[0]?.plain_text ||
-      "제목 없음";
-
-    let pageTexts = [`# ${title}`];
-
-    // 2) 페이지의 블록(내용) 가져오기
-    const blocks = await notion.blocks.children.list({
-      block_id: pageId,
-      page_size: 100
+  try {
+    // 1. Notion 데이터베이스 검색 (사용자 질문과 제목 또는 내용이 일치하는 문서 검색)
+    const response = await notion.databases.query({
+      database_id: DATABASE_ID,
+      filter: {
+        or: [
+          { // 예시: 제목 속성에서 검색
+            property: '이름', // Notion DB의 제목 속성 이름
+            title: {
+              contains: query.substring(0, 50) // 쿼리 일부를 사용하여 검색
+            }
+          },
+          // 더 복잡한 검색 필터링을 여기에 추가할 수 있습니다.
+        ]
+      },
+      page_size: 3, // 최대 3개의 관련 문서만 가져옵니다.
     });
 
-    for (const block of blocks.results) {
-      let richTexts = [];
-
-      if (block.type === "paragraph") {
-        richTexts = block.paragraph.rich_text;
-      } else if (block.type === "heading_1") {
-        richTexts = block.heading_1.rich_text;
-      } else if (block.type === "heading_2") {
-        richTexts = block.heading_2.rich_text;
-      } else if (block.type === "heading_3") {
-        richTexts = block.heading_3.rich_text;
-      } else if (block.type === "bulleted_list_item") {
-        richTexts = block.bulleted_list_item.rich_text;
-      } else if (block.type === "numbered_list_item") {
-        richTexts = block.numbered_list_item.rich_text;
-      }
-
-      if (richTexts && richTexts.length > 0) {
-        const plain = richTexts.map((t) => t.plain_text).join("");
-        if (plain.trim()) pageTexts.push(plain.trim());
-      }
+    if (response.results.length === 0) {
+      return "검색된 관련 내부 문서가 없습니다.";
     }
 
-    contextChunks.push(pageTexts.join("\n"));
+    let context = "--- Notion 검색 결과 ---\n";
+
+    // 2. 각 페이지의 제목과 URL을 컨텍스트에 추가
+    for (const page of response.results) {
+      const title = page.properties.이름.title[0]?.plain_text || '제목 없음';
+      const pageUrl = page.url;
+      
+      // 페이지 내용(블록)까지 가져오려면 블록 API를 별도로 호출해야 하지만, 
+      // 여기서는 간결화를 위해 제목과 URL만 사용합니다.
+      context += `[${title}](${pageUrl})\n`;
+    }
+
+    context += "-------------------------\n";
+    return context;
+
+  } catch (error) {
+    console.error("Notion API 오류:", error.message);
+    return "Notion 검색 중 오류가 발생하여 내부 문서를 참조할 수 없습니다.";
   }
-
-  // 3) 전체 컨텍스트 문자열로 결합
-  let context = contextChunks.join("\n\n---\n\n");
-
-  // GPT 입력 길이 제한을 위해 자르기
-  const MAX_CHARS = 8000;
-  if (context.length > MAX_CHARS) {
-    context = context.slice(0, MAX_CHARS) + "\n\n...(생략)";
-  }
-
-  return context;
 }
 
-module.exports = {
-  buildNotionContext
-};
+module.exports = { buildNotionContext };
