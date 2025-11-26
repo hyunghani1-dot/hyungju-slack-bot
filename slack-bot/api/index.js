@@ -55,7 +55,7 @@ export default async function handler(req, res) {
     }
 
     // 제미나이에게 답변 요청
-    const model = genAI.getGenerativeModel({ model: "gemini-pro"});
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash"});
     const prompt = `
       당신은 업무 도우미입니다. 사용자의 질문에 대해 아래 [노션 검색 결과]를 요약해서 답변해주세요.
       문서의 제목과 링크를 반드시 포함해서 깔끔하게 알려주세요.
@@ -83,3 +83,4 @@ export default async function handler(req, res) {
     });
   }
 }
+
